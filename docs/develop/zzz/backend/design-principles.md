@@ -9,7 +9,7 @@
 
 本规范把现有 `mcp.md`「MCP 只做感知,编码 / 调试交给 AI」的雏形系统化为可执行原则,并融合 Anthropic《[Writing effective tools for AI agents](https://www.anthropic.com/engineering/writing-tools-for-agents)》与 MCP《[Design Principles](https://modelcontextprotocol.io/community/design-principles)》的官方最佳实践,作为现有 tool、本次新增、路线图(run-as-service 等)的共同准绳。
 
-**适用前提**:MCP 面向**源码运行的技术用户**(已装 dev 组含 `mcp`)。普通 GUI 用户走打包 exe、不经本层。
+**适用前提**:MCP 面向两类受众 —— ① **能读源码的技术用户**(本地或远程 SSH,有 shell + 源码树);② **远程 MCP client、看不到代码的纯使用者**(主要跑 app 和一条龙)。普通 GUI 用户走打包 exe、不经本层。本文原则默认按受众①写(假设能读源码);对受众②,凡「读源码才能获得的语义」(app/operation 做什么、效果、消耗),改由 server 主动给(归 P2「领域事实 server 给」,见 P1 源码盲受众例外 与 P9)。
 
 ## 1. 智能体能做什么(源码运行前提下)
 
@@ -17,7 +17,7 @@
 
 | 能力 | 说明 | 例 |
 |---|---|---|
-| 读源码 | Read / Grep / Glob | 读 `OpenAndEnterGame` 知进游戏经哪些节点 |
+| 读源码 | Read / Grep / Glob | 读 `OpenAndEnterGame` 知进游戏经哪些节点(**仅受众①**) |
 | 读运行时文件 | 日志 / 截图 / 配置在工作目录 | `.log/log.txt`(按天轮转)、`.debug/` PNG、YAML |
 | 执行命令 | shell(Bash) | git / uv / grep / tail / `python -c` |
 | 看图 | vision | 读 PNG 理解画面 |
@@ -41,6 +41,8 @@
 MCP 提供:操作游戏、读内存态、跑模型、收敛校验地改配置。**不提供**:静态信息(源码 / 文档 / 日志文件 / 截图文件)—— 智能体自己读。
 (MCP《Design Principles》**capability over compensation**:别为「模型当前不会读日志」就硬塞 `read_log` tool —— 模型会变强,永久结构是债。)
 
+**源码盲受众例外**:上式假设消费者能读源码(受众①)。对受众②(远程 MCP、看不到代码),「智能体自己读源码」通道不存在 —— app/operation 的语义描述(做什么、效果、消耗)只能由 server 给。这不违反「capability over compensation」:不是为「模型当前不会读源码」补偿(模型再强也读不到它访问不到的代码),而是该受众客观上没有该通道,语义描述对其是 P2 的「领域事实」。落地:app/operation 的 class docstring 经 MCP 字段透传(见 P9)。
+
 ### P2. 按知识归属分工(领域事实 vs 通用推理)
 判断「一条信息归 server 还是智能体」,看它**依赖什么知识**:
 - **依赖游戏领域知识 / server 独占能力(CV、screen info、运行时状态、校验)→ server 给**。智能体看截图不懂游戏语义、读不到 server 内存态 —— 这些「**领域事实 / 运行时事实**」server 要主动识别并返回(画面是什么、当前流程节点、运行状态、校验结果)。
@@ -53,7 +55,9 @@ server 给「**事实**」,智能体做「**决策 + 通用理解**」。server 
 ### P3. 操作 vs 观察分离
 操作类 tool 改状态(进游戏 / 停止 / reload / 改配置),观察类只读(窗口 / 截图 / 运行态)。副作用两种标注:
 - **docstring** 文字说明(给智能体读);
-- **MCP tool annotations**(`destructiveHint` / `openWorldHint` 等机器可读,官方推荐)。
+- **MCP tool annotations**(`ToolAnnotations(read_only_hint=...)` 等,Python 使用 snake_case;序列化到 MCP JSON 时 SDK 自动转成 `readOnlyHint` 等 camelCase 字段;机器可读,官方推荐)。
+
+具体怎么标(分类判据 + 代码写法)见 [mcp-implementation.md](mcp-implementation.md) 第 1 节。
 
 ### P4. 不复制智能体已有的能力(选对 tool)
 少而精,每个 tool 清晰独立目的;合并高频链式操作成单 tool。判断标准:**「智能体自己能做?能 → 不做 MCP」**。
@@ -81,6 +85,8 @@ server 给「**事实**」,智能体做「**决策 + 通用理解**」。server 
 docstring 是智能体在众多 tool 里**选对工具**的依据,必须明确说清「能做什么 + 关键约束 + 副作用」,把**隐式上下文**(查询格式 / 术语 / 资源关系)显式化,参数**无歧义命名**(`user_id` 非 `user`)。但 context 有限,**不啰嗦** —— 准确说清即可。
 (Anthropic prompt-engineering descriptions:think how you'd describe the tool to a new hire。)
 
+> **app/operation 的 class docstring 兼作 MCP 描述来源**:对源码盲受众,`ApplicationInfo.description`(取自 app 类 class docstring)与 `describe_operation` 的 description(取自 class / `__init__` docstring)是选对 app/op、理解效果/消耗的主要通道。约定:app class docstring 1-3 行,首行做什么、有消耗/限制必标;由后端契约测试保证非空。
+
 ### P10. 命名空间(namespacing)
 tool 按服务 / 资源分组前缀(如 `game_*` / `run_*`),帮智能体在多 server 多 tool 时选对。
 
@@ -95,11 +101,20 @@ tool 按服务 / 资源分组前缀(如 `game_*` / `run_*`),帮智能体在多 s
 
 例:`RunSlot.app`(operation 标识):运行中可从 `current_op.display_name` 派生,但**终态 `current_op` 销毁**,要存 app 才知道「上次跑的什么」。全景(多 operation)下必要、不可全程派生 → 保留;「当前单 operation」不是删除理由(那是看当前,非全景)。
 
+### P13. 观察类工具可选持久化观测样本
+观察类 tool(如 `analyze_screen`)默认只在内存处理观测(截图 → OCR / 匹配),**不落盘**。但调用方若想对**同一帧**做二次分析(典型:喂给 vision double-check),重新取观测 = 第二次截图、且画面可能已变。故观察类 tool 可**可选地**把已取的观测样本顺手持久化并回传路径(例 `analyze_screen(save_image=True)` → `screenshot_path`),供调用方复用 —— **默认关闭、opt-in**,避免无谓落盘。
+(与 P6「返回智能体友好」协同:路径锚点让智能体关联观测样本;与 P3「操作 vs 观察分离」协同:持久化是观察的可选副作用,docstring 标注,不改变观察语义。)
+
+### P14. 观察类工具可返回能力边界提示
+观察类 tool(如 `analyze_screen`)的输出是**部分识别**(OCR 文字 + 已建模模板命中项),不保证覆盖画面全部视觉信息。智能体易把它当「画面全貌」下判断 → 状态 / 布局判断不完整。故观察类 tool 可在返回里**主动带能力边界提示**(如 `vision_hint`),引导智能体在需要全面理解时补一步视觉工具 / 多模态。
+
+与 P1「capability over compensation」的边界:这不是**新增 tool 补偿模型弱点**(那是债),而是**陈述该 tool 的客观固有能力边界**(它本就只做部分识别,边界永远成立)—— 即使模型变强到总自觉用 vision,字段描述的事实仍真实。承载引导的事实独立成立,故非临时补丁。与 P6(返回智能体友好)/ P13(可选持久化复用同帧)协同:路径给复用入口、提示给「为什么该复用」,形成完整 nudge 链路。
+
 ## 4. 能力分配总表
 
 | 需求 | 智能体自己 | MCP | skill |
 |---|:---:|:---:|:---:|
-| 理解 operation 做什么 | ✅ 读源码 | — | — |
+| 理解 app/operation 做什么 | 受众①:✅ 读源码;受众②:❌ 看不到代码 | 受众②:✅ 经 docstring 给描述(`list_applications.description` / `describe_operation.description`) | — |
 | 操作游戏 / 触发 operation | ❌ | ✅ | — |
 | 运行状态 / 进度 / 失败定位 | ❌ 内存态 | ✅ `get_run_status` | ✅ 组合 |
 | 读日志过程 | ✅ tail | ❌ 不做 | ✅ 路径 + 过滤 |
@@ -126,5 +141,6 @@ tool 按服务 / 资源分组前缀(如 `game_*` / `run_*`),帮智能体在多 s
 ## 相关
 
 - 现状 spec:[architecture.md](architecture.md) / [mcp.md](mcp.md) / [http.md](http.md)
+- 实现落地:[mcp-implementation.md](mcp-implementation.md)(本文配对:原则 → 代码写法)
 - 智能体接入:[../setup/ai_coding.md](../setup/ai_coding.md)
 - harness 方法论(分层类比):[../harness/context_layering.md](../harness/context_layering.md)

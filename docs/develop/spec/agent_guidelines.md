@@ -27,9 +27,15 @@ uv run --env-file .env pytest zzz-od-test/ # 运行所有测试
 
 uv run --env-file .env ruff check src/你修改的文件.py  # 仅检查自己改的文件
 uv run --env-file .env ruff format src/你修改的文件.py # 仅格式化自己改的文件
+
+# 安装并启用提交前检查（只检查本次提交涉及的文件）
+uv run --group dev pre-commit install
+uv run --group dev pre-commit run --files src/你修改的文件.py
 ```
 
 ⚠️ **不要** 对整个 `src/` 目录运行 ruff，现有代码库尚未全面适配 ruff 规则，全量运行会导致大量文件被意外格式化。
+
+项目已通过 `.pre-commit-config.yaml` 提供 Ruff 提交前检查。执行 `uv sync --group dev` 安装开发依赖后，首次使用再执行 `uv run --group dev pre-commit install`；之后提交时会自动运行带 `--fix` 参数的 `ruff-check`。钩子只接收 Git 本次提交的文件，不会扫描整个 `src/`。如需手动检查指定文件，使用上面的 `pre-commit run --files` 命令。
 
 ### 其他
 
@@ -92,21 +98,3 @@ uv run --env-file .env ruff format src/你修改的文件.py # 仅格式化自�
 - 截图区域在 `assets/game_data/screen_info/*.yml` 中声明式定义，不要硬编码在 Python 中。
 - 区域坐标是硬编码的 1080p 像素值 `[x1, y1, x2, y2]`，允许硬编码，不要建议分辨率适配。
 - Operation 中通过 `self.round_by_find_area`、`self.round_by_find_and_click_area`、`self.round_by_goto_screen` 等辅助方法使用。
-
-## 测试代码规范
-
-- **所有测试统一放在 `zzz-od-test/test/`,主仓不保留测试**(`tests/` 已废弃)。新测试一律加到 `zzz-od-test/test/` 对应被测包路径下。
-
-- 测试文件路径约定: 测试文件的目录路径应该是被测文件的包路径+被测文件名的文件夹。
-  - 示例: 对于被测文件`one_dragon.base.operation.one_dragon_context.py`，应创建`zzz-od-test/test/one_dragon/base/operation/one_dragon_context/`文件夹，里面存放多个测试用例文件。
-- 单方法测试文件: 每个Python测试文件应专门用于测试单个方法的各种场景。
-  - 示例: 要测试`method_a`方法，创建一个名为`test_method_a.py`的文件。该文件应包含专门针对`method_a`方法的所有测试用例。
-- 测试类: 测试文件必须使用测试类(以`Test`为前缀)来组织相关测试方法。
-- 夹具
-  - 使用`pytest.fixture`来管理测试依赖和状态(如对象实例创建和清理)以提高代码复用性和可维护性。
-  - 注意指定夹具的作用域(scope)，避免重复调用。
-  - 测试根目录下有一个公共夹具 `zzz-od-test/test/conftest.py`，里面提供基础的运行上下文。测试文件中可以通过 `test_context: TestContext` 引入。
-- 导入约定: 由于项目使用`src-layout`，测试文件中的导入路径不得包含`src`目录。
-  - 正确示例: `from one_dragon.base.operation import Operation`
-  - 错误示例: `from src.one_dragon.base.operation import Operation`
-- 异步测试超时: 所有异步测试方法必须包含超时设置(例如，使用`pytest.mark.timeout(3)`)以防止测试无限期挂起。

@@ -32,12 +32,19 @@ class AnalyzeScreenResult:
         error: 失败时的错误描述。
         screens: 画面匹配结果(精准命中=[1 个 is_precise=True];否则 top_n 个
             is_precise=False 候选)。决策优先看 screens;需看散落文本再看 ocr_texts。
+        screenshot_path: 本次 analyze 新存的截图绝对路径;实时+save_image=True 时有值,
+            其余 None。**有值 ⟺ 这次实时模式新存了张图**(离线模式不存)。
+        vision_hint: 能力边界提示(仅 ``success=True`` 时填):提醒本结果仅含 OCR 文字 +
+            模板匹配命中项,是画面的部分识别,不等同完整视觉理解;需要全面判断画面时配合
+            视觉工具 / 多模态再看。失败(截图 / 分析失败)时为 None。
     """
 
     success: bool
     ocr_texts: list[OcrText]
     error: str | None = None
     screens: list[ScreenMatch] = field(default_factory=list)
+    screenshot_path: str | None = None
+    vision_hint: str | None = None
 
 
 @dataclass
@@ -45,7 +52,9 @@ class WindowStatus:
     """游戏窗口状态。
 
     Attributes:
-        win_title: 窗口标题；获取不到时为 None。
+        win_title: controller 缓存的游戏窗口标题(预期标题,从配置来);游戏未启动时
+            仍可能为该预期常量、非 None。判窗口是否存在/游戏是否在跑请看 is_win_valid,
+            勿据 win_title 是否非空判断。
         is_win_valid: 窗口句柄是否有效。
         is_win_active: 窗口当前是否处于激活状态。
         is_win_scale: 窗口缩放比例是否符合基准（1.0）。
@@ -89,3 +98,125 @@ class RunStatusResult:
     retry_count: int | None = None
     last_status: str | None = None
     failed_node: str | None = None
+
+
+@dataclass
+class ApplicationInfo:
+    """可通过 backend 触发运行的应用信息。
+
+    字段同时描述「一条龙组里是否启用」和「独立应用列表里是否出现」，
+    这样 MCP/HTTP 客户端能区分完整一条龙运行与单个应用运行。
+
+    Attributes:
+        description: 应用描述(由 backend ``app_registry._app_description`` 扫 factory
+            所属模块的 ``Application`` 子类 class docstring 得出);未知 app_id、未扫到
+            App 类或扫到多个歧义时为空串。
+    """
+
+    app_id: str
+    app_name: str
+    description: str = ''
+    enabled_in_one_dragon: bool = False
+    in_standalone_list: bool = False
+    is_active_standalone: bool = False
+
+
+@dataclass
+class ApplicationListResult:
+    """应用运行配置概览。
+
+    用于 ``list_applications`` / ``GET /game/applications`` 返回当前实例下
+    可运行应用、GUI 当前选中的独立应用，以及各应用在不同运行模式中的状态。
+
+    Attributes:
+        current_instance_idx: 当前激活实例的 idx(账号下标)。**idx N → config/0N 目录**
+            (idx 1 → config/01 账号01,idx 2 → config/02 账号02),**不是** config/0<idx+1>。
+            激活实例看 ``config/one_dragon.yml`` 的 ``instance_list`` 里 ``active: true`` 项;
+            改某实例配置前据此定位目录,别把 idx 当目录号做偏移。
+        active_standalone_app_id: GUI「独立应用运行」当前选中的 app_id;无则 None。
+        applications: 可运行应用列表及各运行模式状态。
+    """
+
+    current_instance_idx: int
+    active_standalone_app_id: str | None
+    applications: list[ApplicationInfo]
+
+
+@dataclass
+class PredefinedTeamItem:
+    """预备编队单项(``get_predefined_teams`` / ``GET /game/predefined-teams`` 返回)。
+
+    选配队依据:``idx`` 喂给 ``run_operation(ChoosePredefinedTeam, target_team_idx_list=[idx])``;
+    ``name`` 供按名称匹配;``auto_battle`` 是该队对应的自动战斗脚本名;
+    ``agent_name_list`` 是角色中文名(对应 ``agent_id_list``,便于和攻略/资料匹配);
+    ``weakness_list`` 是该队弱点(中文,防卫战配置优先,没配取角色伤害属性)。
+    """
+
+    idx: int
+    name: str
+    auto_battle: str
+    agent_id_list: list[str]
+    agent_name_list: list[str] = field(default_factory=list)
+    weakness_list: list[str] = field(default_factory=list)
+
+
+@dataclass
+class PredefinedTeamListResult:
+    """预备编队列表(当前实例的真实配队,已过滤 ``TeamConfig`` 补的占位)。"""
+
+    current_instance_idx: int
+    teams: list[PredefinedTeamItem]
+
+
+@dataclass
+class OperationParam:
+    """自定义 operation 的单个参数(纯反射得到,不实例化类)。
+
+    Attributes:
+        name: 参数名(已剔除 self/ctx)。
+        annotation: 类型注解的可读字符串(如 ``str``、``ChargePlanItem``、``int``)。
+        required: 是否必填(无默认值)。
+        default: 默认值的字符串表示;必填参数为 None。
+        json_serializable: 该参数类型是否可经 JSON 标量/列表/字典传入
+            (str/int/float/bool/list/dict/Optional → True;自定义数据类 → False)。
+        coercible: 该参数虽非 JSON 原生类型,但可从 dict 反序列化构造
+            (``@dataclass`` + 有 ``from_dict``,如 ``ChargePlanItem``)。``run_operation``
+            对这类参数接受 dict 值,实例化前用 ``from_dict`` 转成实例。
+    """
+
+    name: str
+    annotation: str
+    required: bool
+    default: str | None = None
+    json_serializable: bool = True
+    coercible: bool = False
+
+
+@dataclass
+class OperationInfo:
+    """单个 operation 的反射信息。
+
+    Attributes:
+        op_id: 定位标识,``<dotted module path>.<ClassName>``。
+        class_name: 类名。
+        module: 定义模块的 dotted path。
+        params: ``__init__`` 参数 schema(已剔除 self/ctx)。
+    """
+
+    op_id: str
+    class_name: str
+    module: str
+    params: list[OperationParam] = field(default_factory=list)
+
+
+@dataclass
+class OperationListResult:
+    """operation 扫描结果。
+
+    Attributes:
+        operations: 通过三重过滤的可运行 operation 信息列表。
+        failures: 单模块 import 失败记录(``{module}: {error}`` 格式),扫描不中断。
+    """
+
+    operations: list[OperationInfo] = field(default_factory=list)
+    failures: list[str] = field(default_factory=list)

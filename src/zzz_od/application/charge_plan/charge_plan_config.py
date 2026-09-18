@@ -1,6 +1,10 @@
 import uuid
 from dataclasses import dataclass, field, fields
 from enum import Enum
+from typing import TYPE_CHECKING, ClassVar
+
+if TYPE_CHECKING:
+    from zzz_od.context.zzz_context import ZContext
 
 from one_dragon.base.config.config_item import ConfigItem
 from one_dragon.base.config.yaml_config import YamlConfig
@@ -58,7 +62,7 @@ class ChargePlanItem:
 
     @property
     def estimated_charge_power(self) -> int:
-        # 菜单态这里只做体力预估；未知类型交给副本内流程再检查真实消耗
+        # 进本前只做体力预估；未知类型交给副本内流程再检查真实消耗
         if self.category_name == '实战模拟室':
             if self.card_num == CardNumEnum.DEFAULT.value.value:
                 return 20
@@ -68,6 +72,8 @@ class ChargePlanItem:
         if self.category_name == '专业挑战室':
             return 40
         if self.category_name == '恶名狩猎':
+            return 60
+        if self.category_name == '合成电池':
             return 60
         return 0  # 未知类型，在副本内检查
 
@@ -147,22 +153,35 @@ class ChargePlanConfig(ApplicationConfig):
 
     def reset_plans(self) -> None:
         """
-        根据运行次数 重置运行计划（跳过 skipped 的计划）
+        根据运行次数重置运行计划。
+        普通计划按整轮扣减，已跳过的代理人计划在进入下一轮时清零。
         """
         if len(self.plan_list) == 0:
             return
 
-        eligible = [p for p in self.plan_list if not p.skipped and p.plan_times > 0]
-        if not eligible:
-            return
+        eligible = [p for p in self.plan_list if not (p.skipped and p.is_agent_plan) and p.plan_times > 0]
+        skipped_agent_plans = [p for p in self.plan_list if p.skipped and p.is_agent_plan]
+        modified = False
 
-        while True:
-            if any(p.run_times < p.plan_times for p in eligible):
-                break
+        if eligible:
+            while True:
+                if any(p.run_times < p.plan_times for p in eligible):
+                    break
 
-            for plan in eligible:
-                plan.run_times -= plan.plan_times
+                for plan in eligible:
+                    plan.run_times -= plan.plan_times
+                modified = True
 
+            if not modified:
+                return
+
+        for plan in skipped_agent_plans:
+            if plan.run_times == 0:
+                continue
+            plan.run_times = 0
+            modified = True
+
+        if modified:
             self.save()
 
     def try_reset_plan_times_by_dt(self, current_dt: str) -> bool:
@@ -230,13 +249,13 @@ class ChargePlanConfig(ApplicationConfig):
 
     def all_plan_finished(self) -> bool:
         """
-        是否全部计划已完成（跳过 skipped 的计划）
+        是否全部计划已完成（跳过已标记跳过的代理人计划）
         """
         if self.plan_list is None:
             return True
 
         for plan in self.plan_list:
-            if plan.skipped:
+            if plan.skipped and plan.is_agent_plan:
                 continue
             if plan.run_times < plan.plan_times:
                 return False
@@ -336,3 +355,30 @@ class ChargePlanConfig(ApplicationConfig):
     @property
     def is_restore_charge_enabled(self) -> bool:
         return self.restore_charge != RestoreChargeEnum.NONE.value.value
+
+    # 运行态/身份字段(set_config 拒绝;详见 spec v5 _RO_FIELDS)
+    _RO_FIELDS: ClassVar[set[str]] = {'plan_id', 'last_daily_reset_dt', 'skip_plan'}
+
+    @classmethod
+    def validate_item(cls, ctx: 'ZContext', item: 'ChargePlanItem') -> str | None:
+        """校验 plan item 业务合法性:category / mission_type / mission_name 在 compendium 合法。
+
+        合法返 None,非法返原因(含合法值)。供 MCP config 工具写入前校验。
+        """
+        categories = [c.value for c in ctx.compendium_service.get_charge_plan_category_list()]
+        if item.category_name not in categories:
+            return f'category {item.category_name} 不合法(合法: {categories})'
+        mission_types = [m.value for m in ctx.compendium_service.get_charge_plan_mission_type_list(item.category_name)]
+        if mission_types:
+            # category 有 mission_type(常规副本):必须合法
+            if item.mission_type_name not in mission_types:
+                return f'mission_type {item.mission_type_name} 不合法(合法: {mission_types})'
+        elif item.mission_type_name:
+            # category 无 mission_type(合成电池等):必须为空
+            return f'{item.category_name} 无 mission_type,mission_type_name 应为空(当前: {item.mission_type_name})'
+        missions = [m.value for m in ctx.compendium_service.get_charge_plan_mission_list(item.category_name, item.mission_type_name)] if mission_types else []
+        if missions and item.mission_name is None:
+            return f'mission_name 必填(合法: {missions})'
+        if item.mission_name is not None and item.mission_name not in missions:
+            return f'mission {item.mission_name} 不合法(合法: {missions})'
+        return None

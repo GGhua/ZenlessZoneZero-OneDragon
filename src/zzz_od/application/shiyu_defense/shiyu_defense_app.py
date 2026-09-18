@@ -36,6 +36,8 @@ MULTI_ROOM_NODES = [5]
 
 class ShiyuDefenseApp(ZApplication):
 
+    """式舆防卫战:终局防守战斗本(剧变节点,双周刷新奖励)。进入战斗、耗时较长。"""
+
     STATUS_ALL_FINISHED: ClassVar[str] = '所有节点都完成挑战'
     STATUS_NEXT_NODE: ClassVar[str] = '下一节点'
     STATUS_ROOM_COMPLETE: ClassVar[str] = '房间挑战完成'
@@ -79,8 +81,8 @@ class ShiyuDefenseApp(ZApplication):
             self.round_by_click_area('式舆防卫战', '前次-关闭')
             return self.round_wait(result.status, wait=2)
 
-        # 判断是否已进入到主界面(“前哨档案”文本出现)
-        return self.round_by_find_area(self.last_screenshot, '式舆防卫战', '前哨档案', retry_wait=1)
+        # 判断是否已进入到主界面(“战报”文本出现)
+        return self.round_by_find_area(self.last_screenshot, '式舆防卫战', '战报', retry_wait=1)
 
     @node_from(from_name='等待画面加载')
     @operation_node(name='选择节点')
@@ -97,35 +99,25 @@ class ShiyuDefenseApp(ZApplication):
                     break
             if not progress_text:
                 progress_text = list(ocr_results.keys())[0]
-            match = re.search(r'(\d+)\s*/\s*(\d+)', progress_text)
-            if match:
-                total = int(match.group(2))
-                current = int(match.group(1))
+            # OCR 可能将 "2/5" 连写为 "215"，取首尾数字分别作为当前和总节点数。
+            digits = re.findall(r'\d', progress_text)
+            if len(digits) >= 2:
+                current = int(digits[0])
+                total = int(digits[-1])
                 log.info('剧变节点进度 %d/%d', current, total)
                 self.config.critical_max_node_idx = total
                 next_idx = current + 1
                 if next_idx > total:
                     return self.round_success(ShiyuDefenseApp.STATUS_ALL_FINISHED)
+            elif len(digits) == 1:
+                # 只有一个数字，可能是 "5"，说明已完成
+                total = int(digits[0])
+                log.info('剧变节点进度 已完成 %d', total)
+                self.config.critical_max_node_idx = total
+                return self.round_success(ShiyuDefenseApp.STATUS_ALL_FINISHED)
             else:
-                # 解析失败，回退到单数字（全部完成时可能只显示总节点数）
-                digits = re.findall(r'\d+', progress_text)
-                if len(digits) >= 2:
-                    current = int(digits[0])
-                    total = int(digits[1])
-                    log.info('剧变节点进度 %d/%d', current, total)
-                    self.config.critical_max_node_idx = total
-                    next_idx = current + 1
-                    if next_idx > total:
-                        return self.round_success(ShiyuDefenseApp.STATUS_ALL_FINISHED)
-                elif len(digits) == 1:
-                    # 只有一个数字，可能是 "5"，说明已完成
-                    total = int(digits[0])
-                    log.info('剧变节点进度 已完成 %d', total)
-                    self.config.critical_max_node_idx = total
-                    return self.round_success(ShiyuDefenseApp.STATUS_ALL_FINISHED)
-                else:
-                    log.info('OCR 进度解析失败: %s', progress_text)
-                    next_idx = 1
+                log.info('OCR 进度解析失败: %s', progress_text)
+                next_idx = 1
         else:
             log.info('未读到剧变节点进度，尝试从 run_record 获取')
             next_idx = self.run_record.next_node_idx()
@@ -312,7 +304,7 @@ class ShiyuDefenseApp(ZApplication):
     @node_from(from_name='多间-战斗', status='战斗失败')
     @operation_node(name='多间-战斗失败', node_max_retry_times=30)
     def multi_room_failed(self) -> OperationRoundResult:
-        result = self.round_by_find_area(self.last_screenshot, '式舆防卫战', '前哨档案')
+        result = self.round_by_find_area(self.last_screenshot, '式舆防卫战', '战报')
         if result.is_success:
             return self.round_success(result.status)
         return self.round_by_click_area('菜单', '返回', success_wait=1, retry_wait=1)
@@ -375,8 +367,8 @@ class ShiyuDefenseApp(ZApplication):
     @node_from(from_name='下一节点', status='战斗结束-退出')
     @operation_node(name='所有节点完成', node_max_retry_times=60)
     def all_node_finished(self) -> OperationRoundResult:
-        # 点击直到“前哨档案”出现
-        result = self.round_by_find_area(self.last_screenshot, '式舆防卫战', '前哨档案')
+        # 点击直到“战报”出现
+        result = self.round_by_find_area(self.last_screenshot, '式舆防卫战', '战报')
         if result.is_success:
             return self.round_success(result.status, wait=1)
 
@@ -409,8 +401,8 @@ class ShiyuDefenseApp(ZApplication):
     @node_from(from_name='领取奖励')
     @operation_node(name='关闭奖励')
     def close_reward(self) -> OperationRoundResult:
-        # 判断是否已回到主界面(“前哨档案”出现)
-        result = self.round_by_find_area(self.last_screenshot, '式舆防卫战', '前哨档案')
+        # 判断是否已回到主界面(“战报”出现)
+        result = self.round_by_find_area(self.last_screenshot, '式舆防卫战', '战报')
         if result.is_success:
             return self.round_success(result.status)
 
