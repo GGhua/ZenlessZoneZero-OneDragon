@@ -463,7 +463,7 @@ class AgentEnum(Enum):
                 AgentStateCheckWay.FOREGROUND_COLOR_RANGE_LENGTH,
                 template_id="yeshunguang_mingxinjing",
                 hsv_color=(113, 75, 255),
-                hsv_color_diff=(10, 50, 50),
+                hsv_color_diff=(10, 75, 50),
                 max_length=120,
             ),
             AgentStateDef(
@@ -579,3 +579,5 @@ class AgentEnum(Enum):
                                      lower_color=(150, 0, 0), upper_color=(255, 90, 50),
                                      max_length=100, min_value_trigger_state=5),
                    ])
+
+    ROXY = Agent('roxy', '洛克茜', RareTypeEnum.S, AgentTypeEnum.STUN, DmgTypeEnum.WIND, ['roxy'])
